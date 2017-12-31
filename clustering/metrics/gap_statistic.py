@@ -48,16 +48,12 @@ def __bounding_box(X):
         X: The data
 
     Returns:
-        Two lists: mins, maxs. Mins contains the minimum values in
+        Two arrays: mins, maxs. Mins contains the minimum values in
         each dimension of the data. Maxs contains the maximum values
         in each dimension of the data.
     """
-    n_dims = len(X.shape)
-    mins = []
-    maxs = []
-    for dim in range(n_dims):
-        mins.append(min(X, key=lambda a: a[dim])[dim])
-        maxs.append(max(X, key=lambda a: a[dim])[dim])
+    mins = np.min(X, axis=0)
+    maxs = np.max(X, axis=0)
     return mins, maxs
 
 
@@ -89,35 +85,34 @@ def gap_statistic(X, label_list, clusterers, return_graph_stats=False):
     ks = np.array([len(np.unique(labels)) for labels in label_list])
     mins, maxs = __bounding_box(X)
 
-    logWks = np.zeros(len(ks))  # Holds the log(Wk) for each k
-    avgLogWkbs = np.zeros(len(ks))  # Holds average Wkb for each k over all B
-    sks = np.zeros(len(ks))  # holds sk for each k
-
-    # Create B reference datasets
-    B = 10
-    Xbs = []  # holds each reference dataset
-    for i in range(B):
-        Xb = []
-        for n in range(len(X)):
-            distribs = []
-            for j in range(len(mins)):
-                distribs.append(np.random.uniform(mins[j], maxs[j]))
-            Xb.append(distribs)
-        Xb = np.array(Xb)
-        Xbs.append(Xb)
-    # Cluster B
+    # First get log(Wk) for each k
+    logWks = np.empty(len(ks))  # Holds the log(Wk) for each k
     for indk in range(len(ks)):
         logWk = np.log(__wk(X, label_list[indk]))
         logWks[indk] = logWk
-        clusterer = clusterers[indk]
-        logWkbs = np.zeros(B)
-        for i, Xb in enumerate(Xbs):
+
+    # Create B reference datasets, and compute 1/B log(Wkb) over all
+    B = 10
+    # Create k x B array to hold all calculated values of log(Wkb)
+    logWkbs = np.empty(shape=(len(ks), B))
+    for b in range(B):
+        # Create dataset
+        Xb = np.empty(shape=X.shape)
+        for n in range(len(X)):
+            for j in range(len(mins)):
+                Xb[n][j] = np.random.uniform(mins[j], maxs[j])
+
+        # Calculate logWkb for each B
+        for indk in range(len(ks)):
+            clusterer = clusterers[indk]
             Xb_labels = clusterer.fit_predict(Xb)
-            logWkbs[i] = np.log(__wk(Xb, Xb_labels))
-        avgLogWkb = np.sum(logWkbs) / B
-        avgLogWkbs[indk] = avgLogWkb
-        sks[indk] = np.sqrt(sum((logWkbs - avgLogWkb) ** 2) / B)
-    sks = sks * np.sqrt(1 + 1 / B)  # make final conversion of SD to sk term
+            logWkbs[indk][b] = np.log(__wk(Xb, Xb_labels))
+
+    # Calc sk (stdev logWkbs * sqrt(1+ 1 / B)) and 1/B sum(logWkb) for each k
+    sks = np.std(logWkbs, axis=1) * np.sqrt(1 + 1 / B)
+    avgLogWkbs = np.mean(logWkbs, axis=1)
+
+    # Calc gaps
     gaps = avgLogWkbs - logWks
 
     # Ignore last index of shifted because it is meaningless
